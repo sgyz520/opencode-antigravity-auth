@@ -153,23 +153,9 @@ export function filterUnsignedThinkingBlocks(contents: any[]): any[] {
 }
 
 /**
- * Transforms Anthropic-style thinking blocks (type: "thinking") to reasoning format.
- */
-function transformAnthropicThinkingBlocks(content: any[]): any[] {
-  return content.map((block: any) => {
-    if (block && typeof block === "object" && block.type === "thinking") {
-      return {
-        type: "reasoning",
-        text: block.text || "",
-        ...(block.signature ? { signature: block.signature } : {}),
-      };
-    }
-    return block;
-  });
-}
-
-/**
- * Transforms Gemini-style thought parts (thought: true) to reasoning format.
+ * Transforms Gemini-style thought parts (thought: true) and Anthropic-style
+ * thinking parts (type: "thinking") to reasoning format.
+ * Claude responses through Antigravity may use candidates structure with Anthropic-style parts.
  */
 function transformGeminiCandidate(candidate: any): any {
   if (!candidate || typeof candidate !== "object") {
@@ -183,10 +169,28 @@ function transformGeminiCandidate(candidate: any): any {
 
   const thinkingTexts: string[] = [];
   const transformedParts = content.parts.map((part: any) => {
-    if (part && typeof part === "object" && part.thought === true) {
+    if (!part || typeof part !== "object") {
+      return part;
+    }
+
+    // Handle Gemini-style: thought: true
+    if (part.thought === true) {
       thinkingTexts.push(part.text || "");
       return { ...part, type: "reasoning" };
     }
+
+    // Handle Anthropic-style in candidates: type: "thinking"
+    if (part.type === "thinking") {
+      const thinkingText = part.thinking || part.text || "";
+      thinkingTexts.push(thinkingText);
+      return {
+        ...part,
+        type: "reasoning",
+        text: thinkingText,
+        thought: true,
+      };
+    }
+
     return part;
   });
 
@@ -200,6 +204,7 @@ function transformGeminiCandidate(candidate: any): any {
 /**
  * Transforms thinking/reasoning content in response parts to OpenCode's expected format.
  * Handles both Gemini-style (thought: true) and Anthropic-style (type: "thinking") formats.
+ * Also extracts reasoning_content for Anthropic-style responses.
  */
 export function transformThinkingParts(response: unknown): unknown {
   if (!response || typeof response !== "object") {
@@ -208,13 +213,36 @@ export function transformThinkingParts(response: unknown): unknown {
 
   const resp = response as Record<string, unknown>;
   const result: Record<string, unknown> = { ...resp };
+  const reasoningTexts: string[] = [];
 
+  // Handle Anthropic-style content array (type: "thinking")
   if (Array.isArray(resp.content)) {
-    result.content = transformAnthropicThinkingBlocks(resp.content);
+    const transformedContent: any[] = [];
+    for (const block of resp.content) {
+      if (block && typeof block === "object" && (block as any).type === "thinking") {
+        const thinkingText = (block as any).thinking || (block as any).text || "";
+        reasoningTexts.push(thinkingText);
+        transformedContent.push({
+          ...block,
+          type: "reasoning",
+          text: thinkingText,
+          thought: true,
+        });
+      } else {
+        transformedContent.push(block);
+      }
+    }
+    result.content = transformedContent;
   }
 
+  // Handle Gemini-style candidates array
   if (Array.isArray(resp.candidates)) {
     result.candidates = resp.candidates.map(transformGeminiCandidate);
+  }
+
+  // Add reasoning_content if we found any thinking blocks (for Anthropic-style)
+  if (reasoningTexts.length > 0 && !result.reasoning_content) {
+    result.reasoning_content = reasoningTexts.join("\n\n");
   }
 
   return result;

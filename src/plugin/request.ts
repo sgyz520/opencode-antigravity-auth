@@ -64,6 +64,60 @@ function transformStreamingPayload(payload: string): string {
 }
 
 /**
+ * Creates a TransformStream that processes SSE chunks incrementally,
+ * transforming each line as it arrives for true streaming support.
+ */
+function createStreamingTransformer(): TransformStream<Uint8Array, Uint8Array> {
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let buffer = "";
+
+  return new TransformStream({
+    transform(chunk, controller) {
+      buffer += decoder.decode(chunk, { stream: true });
+
+      // Process complete lines
+      const lines = buffer.split("\n");
+      // Keep the last incomplete line in buffer
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        const transformedLine = transformSseLine(line);
+        controller.enqueue(encoder.encode(transformedLine + "\n"));
+      }
+    },
+    flush(controller) {
+      // Process any remaining data in buffer
+      if (buffer) {
+        const transformedLine = transformSseLine(buffer);
+        controller.enqueue(encoder.encode(transformedLine));
+      }
+    },
+  });
+}
+
+/**
+ * Transforms a single SSE line, extracting and transforming the inner response.
+ */
+function transformSseLine(line: string): string {
+  if (!line.startsWith("data:")) {
+    return line;
+  }
+  const json = line.slice(5).trim();
+  if (!json) {
+    return line;
+  }
+  try {
+    const parsed = JSON.parse(json) as { response?: unknown };
+    if (parsed.response !== undefined) {
+      const transformed = transformThinkingParts(parsed.response);
+      return `data: ${JSON.stringify(transformed)}`;
+    }
+  } catch (_) { }
+  return line;
+}
+
+/**
  * Rewrites OpenAI-style requests into Antigravity shape, normalizing model, headers,
  * optional cached_content, and thinking config. Also toggles streaming mode for SSE actions.
  */
@@ -463,6 +517,8 @@ export function prepareAntigravityRequest(
 /**
  * Normalizes Antigravity responses: applies retry headers, extracts cache usage into headers,
  * rewrites preview errors, flattens streaming payloads, and logs debug metadata.
+ *
+ * For streaming SSE responses, uses TransformStream for true incremental streaming.
  */
 export async function transformAntigravityResponse(
   response: Response,
@@ -487,9 +543,27 @@ export async function transformAntigravityResponse(
     return response;
   }
 
+  const headers = new Headers(response.headers);
+
+  // For streaming SSE responses that are successful, use true streaming with TransformStream
+  if (streaming && response.ok && isEventStreamResponse && response.body) {
+    logAntigravityDebugResponse(debugContext, response, {
+      note: "Streaming SSE response (true streaming enabled)",
+      headersOverride: headers,
+    });
+
+    const transformedStream = response.body.pipeThrough(createStreamingTransformer());
+
+    return new Response(transformedStream, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  }
+
+  // For non-streaming or error responses, consume the body and process
   try {
     const text = await response.text();
-    const headers = new Headers(response.headers);
 
     if (!response.ok) {
       let errorBody;
@@ -558,10 +632,11 @@ export async function transformAntigravityResponse(
 
     logAntigravityDebugResponse(debugContext, response, {
       body: text,
-      note: streaming ? "Streaming SSE payload" : undefined,
+      note: streaming ? "Streaming SSE payload (fallback - no body stream)" : undefined,
       headersOverride: headers,
     });
 
+    // Fallback for streaming without body (shouldn't normally happen)
     if (streaming && response.ok && isEventStreamResponse) {
       return new Response(transformStreamingPayload(text), init);
     }
