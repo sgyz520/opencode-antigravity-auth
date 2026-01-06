@@ -22,6 +22,7 @@ import {
   injectToolHardeningInstruction,
   cleanJSONSchemaForAntigravity,
   createSyntheticErrorResponse,
+  recursivelyParseJsonStrings,
 } from "./request-helpers";
 import { deduplicateThinkingText, createThoughtBuffer } from "./core/streaming/transformer";
 
@@ -1710,5 +1711,71 @@ describe("deduplicateThinkingText", () => {
     const result = deduplicateThinkingText(chunk, buffer) as any;
     expect(result.candidates[0].content.parts[1].text).toBe("Regular text");
     expect(result.candidates[0].content.parts[2].functionCall.name).toBe("test");
+  });
+});
+
+describe("recursivelyParseJsonStrings", () => {
+  it("parses JSON strings in non-protected keys", () => {
+    const input = { metadata: '{"key": "value"}' };
+    const result = recursivelyParseJsonStrings(input);
+    expect(result).toEqual({ metadata: { key: "value" } });
+  });
+
+  it("preserves oldString/newString even when they contain valid JSON", () => {
+    const input = {
+      oldString: '{"name": "test"}',
+      newString: '{"name": "updated"}',
+    };
+    const result = recursivelyParseJsonStrings(input);
+    expect(result).toEqual({
+      oldString: '{"name": "test"}',
+      newString: '{"name": "updated"}',
+    });
+  });
+
+  it("preserves content parameter even when it contains valid JSON", () => {
+    const input = {
+      content: '{"dependencies": {"lodash": "^4.0.0"}}',
+      filePath: "/path/to/package.json",
+    };
+    const result = recursivelyParseJsonStrings(input);
+    expect(result).toEqual({
+      content: '{"dependencies": {"lodash": "^4.0.0"}}',
+      filePath: "/path/to/package.json",
+    });
+  });
+
+  it("parses JSON in non-protected keys", () => {
+    const input = {
+      metadata: '{"version": 1}',
+      oldString: '{"should": "stay"}',
+    };
+    const result = recursivelyParseJsonStrings(input);
+    expect(result).toEqual({
+      metadata: { version: 1 },
+      oldString: '{"should": "stay"}',
+    });
+  });
+
+  it("handles nested objects with protected keys", () => {
+    const input = {
+      tool: {
+        name: "edit",
+        args: {
+          oldString: '["item1", "item2"]',
+          newString: '["item1", "item2", "item3"]',
+        },
+      },
+    };
+    const result = recursivelyParseJsonStrings(input);
+    expect(result).toEqual({
+      tool: {
+        name: "edit",
+        args: {
+          oldString: '["item1", "item2"]',
+          newString: '["item1", "item2", "item3"]',
+        },
+      },
+    });
   });
 });
