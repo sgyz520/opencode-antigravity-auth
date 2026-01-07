@@ -389,7 +389,15 @@ describe("Storage Migration", () => {
         activeIndex: 0,
       };
 
-      vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(v2Data));
+      // Mock readFile to return different values based on path
+      vi.mocked(fs.readFile).mockImplementation((path) => {
+        if ((path as string).endsWith(".gitignore")) {
+          const error = new Error("ENOENT") as NodeJS.ErrnoException;
+          error.code = "ENOENT";
+          return Promise.reject(error);
+        }
+        return Promise.resolve(JSON.stringify(v2Data));
+      });
 
       const result = await loadAccounts();
 
@@ -404,14 +412,22 @@ describe("Storage Migration", () => {
       });
 
       expect(fs.writeFile).toHaveBeenCalled();
-      const saveCall = vi.mocked(fs.writeFile).mock.calls[0];
-      if (!saveCall) throw new Error("saveAccounts was not called");
+      
+      const saveCall = vi.mocked(fs.writeFile).mock.calls.find(
+        (call) => (call[0] as string).includes(".tmp")
+      );
+      if (!saveCall) throw new Error("saveAccounts was not called (tmp file not found)");
 
       const savedContent = JSON.parse(saveCall[1] as string);
       expect(savedContent.version).toBe(3);
       expect(savedContent.accounts[0].rateLimitResetTimes).toEqual({
         "gemini-antigravity": future,
       });
+
+      const gitignoreCall = vi.mocked(fs.writeFile).mock.calls.find(
+        (call) => (call[0] as string).includes(".gitignore")
+      );
+      expect(gitignoreCall).toBeDefined();
     });
   });
 
@@ -451,6 +467,7 @@ describe("Storage Migration", () => {
 
     it("does nothing when all entries already exist", async () => {
       const existing = [
+        ".gitignore",
         "antigravity-accounts.json",
         "antigravity-signature-cache.json",
         "antigravity-logs/",
@@ -513,6 +530,7 @@ describe("Storage Migration", () => {
     it("does nothing when all entries already exist", async () => {
       vi.mocked(existsSync).mockReturnValue(true);
       const existing = [
+        ".gitignore",
         "antigravity-accounts.json",
         "antigravity-signature-cache.json",
         "antigravity-logs/",
