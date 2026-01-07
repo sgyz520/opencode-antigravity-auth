@@ -19,6 +19,7 @@ const log = createLogger("storage");
  * These contain sensitive data or machine-specific state.
  */
 export const GITIGNORE_ENTRIES = [
+  ".gitignore",
   "antigravity-accounts.json",
   "antigravity-signature-cache.json",
   "antigravity-logs/",
