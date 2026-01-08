@@ -54,6 +54,7 @@ import {
   needsThinkingRecovery,
 } from "./thinking-recovery";
 import { sanitizeCrossModelPayloadInPlace } from "./transform/cross-model-sanitizer";
+import { isGemini3Model } from "./transform";
 import {
   resolveModelWithTier,
   resolveModelWithVariant,
@@ -1528,7 +1529,7 @@ export async function transformAntigravityResponse(
         signatureSessionKey: sessionId,
         debugText,
         cacheSignatures,
-        displayedThinkingHashes: sessionDisplayedThinkingHashes,
+        displayedThinkingHashes: effectiveModel && isGemini3Model(effectiveModel) ? sessionDisplayedThinkingHashes : undefined,
       },
     );
     return new Response(response.body.pipeThrough(streamingTransformer), {
