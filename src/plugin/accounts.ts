@@ -370,7 +370,10 @@ export class AccountManager {
         };
       });
 
-      const selectedIndex = selectHybridAccount(accountsWithMetrics, tokenTracker);
+      // Get current account index for stickiness
+      const currentIndex = this.currentAccountIndexByFamily[family] ?? null;
+      
+      const selectedIndex = selectHybridAccount(accountsWithMetrics, tokenTracker, currentIndex);
       if (selectedIndex !== null) {
         const selected = this.accounts[selectedIndex];
         if (selected) {
