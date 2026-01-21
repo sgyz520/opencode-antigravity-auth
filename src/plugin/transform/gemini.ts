@@ -240,8 +240,8 @@ export function normalizeGeminiTools(
   payload.tools = (payload.tools as unknown[]).map((tool: unknown, toolIndex: number) => {
     const t = tool as Record<string, unknown>;
     
-    // Skip normalization for Google Search Retrieval tool
-    if (t.googleSearchRetrieval) {
+    // Skip normalization for Google Search tools (both old and new API)
+    if (t.googleSearch || t.googleSearchRetrieval) {
       return t;
     }
 
@@ -362,7 +362,7 @@ export interface GeminiTransformResult {
   toolDebugSummaries: string[];
   /** Number of function declarations after wrapping */
   wrappedFunctionCount: number;
-  /** Number of passthrough tools (googleSearchRetrieval, codeExecution) */
+  /** Number of passthrough tools (googleSearch, googleSearchRetrieval, codeExecution) */
   passthroughToolCount: number;
 }
 
@@ -400,21 +400,19 @@ export function applyGeminiTransforms(
   }
 
   // 2. Apply Google Search (Grounding) if enabled
+  // Uses the new googleSearch API for Gemini 2.0+ / Gemini 3 models
+  // Note: The old googleSearchRetrieval with dynamicRetrievalConfig is deprecated
+  // The new API doesn't support threshold - the model decides when to search automatically
   if (googleSearch && googleSearch.mode === 'auto') {
     const tools = (payload.tools as unknown[]) || [];
     if (!payload.tools) {
       payload.tools = tools;
     }
 
-    // Add Google Search tool
-    // We cast to any[] to avoid TypeScript issues with the loose RequestPayload type
+    // Add Google Search tool using new API format for Gemini 2.0+
+    // See: https://ai.google.dev/gemini-api/docs/grounding
     (payload.tools as any[]).push({
-      googleSearchRetrieval: {
-        dynamicRetrievalConfig: {
-          mode: "MODE_DYNAMIC",
-          dynamicThreshold: googleSearch.threshold ?? 0.3,
-        },
-      },
+      googleSearch: {},
     });
   }
 
@@ -464,7 +462,8 @@ export function wrapToolsAsFunctionDeclarations(payload: RequestPayload): WrapTo
   const passthroughTools: unknown[] = [];
   
   for (const tool of payload.tools as Array<Record<string, unknown>>) {
-    if (tool.googleSearchRetrieval || tool.codeExecution) {
+    // Handle passthrough tools (Google Search and Code Execution)
+    if (tool.googleSearch || tool.googleSearchRetrieval || tool.codeExecution) {
       passthroughTools.push(tool);
       continue;
     }

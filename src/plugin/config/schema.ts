@@ -313,24 +313,17 @@ export const AntigravityConfigSchema = z.object({
   auto_update: z.boolean().default(true),
 
   // =========================================================================
-  // Web Search (Gemini Grounding)
+  // Web Search (Google Search Tool)
   // =========================================================================
 
+  /**
+   * @deprecated The web_search config is no longer used.
+   * Google Search is now implemented as a dedicated `google_search` tool
+   * that the model can call explicitly. This avoids Gemini API limitations
+   * where googleSearch cannot be combined with function declarations.
+   */
   web_search: z.object({
-    /**
-     * Default mode for web search when not specified by variant.
-     * - `auto`: Model decides when to search (dynamic retrieval).
-     * - `off`: Search is disabled by default.
-     * @default "off"
-     */
     default_mode: z.enum(['auto', 'off']).default('off'),
-
-    /**
-     * Dynamic retrieval threshold (0.0 to 1.0).
-     * Higher values make the model search LESS often (requires higher confidence to trigger search).
-     * Only applies in 'auto' mode.
-     * @default 0.3
-     */
     grounding_threshold: z.number().min(0).max(1).default(0.3),
   }).optional(),
 });
@@ -384,7 +377,7 @@ export const DEFAULT_CONFIG: AntigravityConfig = {
     initial_tokens: 50,
   },
   web_search: {
-    default_mode: 'off',
+    default_mode: 'auto',
     grounding_threshold: 0.3,
   },
 };

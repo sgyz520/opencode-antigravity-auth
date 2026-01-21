@@ -64,7 +64,6 @@ import {
   isClaudeModel,
   isClaudeThinkingModel,
   CLAUDE_THINKING_MAX_OUTPUT_TOKENS,
-  type GoogleSearchConfig,
   type ThinkingTier,
 } from "./transform";
 import { detectErrorType } from "./recovery";
@@ -601,8 +600,6 @@ export function isGenerativeLanguageRequest(input: RequestInfo): input is string
 export interface PrepareRequestOptions {
   /** Enable Claude tool hardening (parameter signatures + system instruction). Default: true */
   claudeToolHardening?: boolean;
-  /** Google Search configuration (global default) */
-  googleSearch?: GoogleSearchConfig;
 }
 
 export function prepareAntigravityRequest(
@@ -994,7 +991,9 @@ export function prepareAntigravityRequest(
         }
 
         // Normalize tools. For Claude models, keep full function declarations (names + schemas).
-        if (Array.isArray(requestPayload.tools)) {
+        const hasTools = Array.isArray(requestPayload.tools) && requestPayload.tools.length > 0;
+
+        if (hasTools) {
           if (isClaude) {
             const functionDeclarations: any[] = [];
             const passthroughTools: any[] = [];
@@ -1048,7 +1047,7 @@ export function prepareAntigravityRequest(
               return cleaned;
             };
 
-            requestPayload.tools.forEach((tool: any) => {
+            (requestPayload.tools as any[]).forEach((tool: any) => {
               const pushDeclaration = (decl: any, source: string) => {
                 const schema =
                   decl?.parameters ||
@@ -1123,16 +1122,11 @@ export function prepareAntigravityRequest(
             requestPayload.tools = finalTools.concat(passthroughTools);
           } else {
             // Gemini-specific tool normalization and feature injection
-            // Resolve Google Search config: Variant takes precedence over global default
-            const effectiveSearchConfig: GoogleSearchConfig | undefined =
-              variantConfig?.googleSearch ?? options?.googleSearch;
-
             const geminiResult = applyGeminiTransforms(requestPayload, {
               model: effectiveModel,
               normalizedThinking: undefined, // Thinking config already applied above (lines 816-880)
               tierThinkingBudget,
               tierThinkingLevel: tierThinkingLevel as ThinkingTier | undefined,
-              googleSearch: effectiveSearchConfig,
             });
 
             toolDebugMissing = geminiResult.toolDebugMissing;
