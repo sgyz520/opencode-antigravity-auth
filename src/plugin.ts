@@ -65,6 +65,41 @@ const warmupSucceededSessionIds = new Set<string>();
 
 const log = createLogger("plugin");
 
+// Module-level toast debounce to persist across requests (fixes toast spam)
+const rateLimitToastCooldowns = new Map<string, number>();
+const RATE_LIMIT_TOAST_COOLDOWN_MS = 5000;
+const MAX_TOAST_COOLDOWN_ENTRIES = 100;
+
+// Track if "all accounts rate-limited" toast was shown to prevent spam in while loop
+let allAccountsRateLimitedToastShown = false;
+
+function cleanupToastCooldowns(): void {
+  if (rateLimitToastCooldowns.size > MAX_TOAST_COOLDOWN_ENTRIES) {
+    const now = Date.now();
+    for (const [key, time] of rateLimitToastCooldowns) {
+      if (now - time > RATE_LIMIT_TOAST_COOLDOWN_MS * 2) {
+        rateLimitToastCooldowns.delete(key);
+      }
+    }
+  }
+}
+
+function shouldShowRateLimitToast(message: string): boolean {
+  cleanupToastCooldowns();
+  const toastKey = message.replace(/\d+/g, "X");
+  const lastShown = rateLimitToastCooldowns.get(toastKey) ?? 0;
+  const now = Date.now();
+  if (now - lastShown < RATE_LIMIT_TOAST_COOLDOWN_MS) {
+    return false;
+  }
+  rateLimitToastCooldowns.set(toastKey, now);
+  return true;
+}
+
+function resetAllAccountsRateLimitedToast(): void {
+  allAccountsRateLimitedToastShown = false;
+}
+
 function trackWarmupAttempt(sessionId: string): boolean {
   if (warmupSucceededSessionIds.has(sessionId)) {
     return false;
@@ -956,24 +991,15 @@ export const createAntigravityPlugin = (providerId: string) => async (
           // This ensures we wait and retry when all accounts are rate-limited
           const quietMode = config.quiet_mode;
 
-          // Debounce rate limit toasts to avoid spam (5s cooldown per message type)
-          const rateLimitToastCooldowns = new Map<string, number>();
-          const RATE_LIMIT_TOAST_COOLDOWN_MS = 5000;
-
           // Helper to show toast without blocking on abort (respects quiet_mode)
           const showToast = async (message: string, variant: "info" | "warning" | "success" | "error") => {
             if (quietMode) return;
             if (abortSignal?.aborted) return;
             
-            // Debounce rate limit warnings to prevent toast spam
             if (variant === "warning" && message.toLowerCase().includes("rate")) {
-              const toastKey = message.replace(/\d+/g, "X"); // Normalize numbers for grouping
-              const lastShown = rateLimitToastCooldowns.get(toastKey) ?? 0;
-              const now = Date.now();
-              if (now - lastShown < RATE_LIMIT_TOAST_COOLDOWN_MS) {
-                return; // Skip - shown recently
+              if (!shouldShowRateLimitToast(message)) {
+                return;
               }
-              rateLimitToastCooldowns.set(toastKey, now);
             }
             
             try {
@@ -1051,12 +1077,18 @@ export const createAntigravityPlugin = (providerId: string) => async (
                 );
               }
 
-              await showToast(`All ${accountCount} account(s) rate-limited for ${family}. Waiting ${waitSecValue}s...`, "warning");
+              if (!allAccountsRateLimitedToastShown) {
+                await showToast(`All ${accountCount} account(s) rate-limited for ${family}. Waiting ${waitSecValue}s...`, "warning");
+                allAccountsRateLimitedToastShown = true;
+              }
 
               // Wait for the rate-limit cooldown to expire, then retry
               await sleep(waitMs, abortSignal);
               continue;
             }
+
+            // Account is available - reset the toast flag
+            resetAllAccountsRateLimitedToast();
 
             pushDebug(
               `selected idx=${account.index} email=${account.email ?? ""} family=${family} accounts=${accountCount} strategy=${config.account_selection_strategy}`,
